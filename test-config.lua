@@ -4,9 +4,11 @@ vim.g.vscode_style = "dark"
 
 neoide.register_project_config {
 	name = "Visual Studio Soluion",
-	get_project_files = function()
-		return {}
-	end
+	detect = function()
+		local output = vim.fn.systemlist [[rg --files -g "*.sln" --max-depth 1]]
+		return #output ~= 0
+	end,
+	ignore_list = { "bin", "obj" }
 }
 
 neoide.register_language {
@@ -59,3 +61,4 @@ neoide.setup {
 vim.o.number = true
 vim.o.relativenumber = true
 vim.o.tabstop = 4
+vim.o.shiftwidth = 4

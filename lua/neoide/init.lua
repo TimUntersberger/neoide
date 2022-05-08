@@ -1,23 +1,17 @@
 local KeybindingKind = {
 	LspHover = "LspHover",
 	LspGoToDefinition = "LspGoToDefinition",
-	FindFile = "FindFile"
-}
-
-local KeybindingHandlers = {
-	[KeybindingKind.LspHover] = vim.lsp.buf.hover,
-	[KeybindingKind.LspGoToDefinition] = vim.lsp.buf.definition,
-	[KeybindingKind.FindFile] = function()
-		local tb = require 'telescope.builtin'
-		tb.find_files {
-			find_command = { "rg", "-i", "--hidden", "--files", "-g", "!.git" },
-		}
-	end,
+	LspGoToReference = "LspGoToReference",
+	LspGoToImplementation = "LspGoToImplementation",
+	FindFile = "FindFile",
+	SearchFiles = "SearchFiles",
+	FormatFile = "FormatFile"
 }
 
 local M = {
 	languages = {},
 	project_configurations = {},
+	active_project_config = nil,
 	packer = {
 		git = 'https://github.com/wbthomason/packer.nvim',
 		plugins = {
@@ -36,11 +30,37 @@ local M = {
 	keybindings = {
 		[KeybindingKind.LspHover] = "K",
 		[KeybindingKind.LspGoToDefinition] = "<c-]>",
+		[KeybindingKind.LspGoToImplementation] = "<c-[>",
+		[KeybindingKind.LspGoToReference] = "<c-r>",
 		[KeybindingKind.FindFile] = "<c-p>",
 	},
 	KeybindingKind = KeybindingKind,
 	config = {}
 }
+
+local function get_active_project_config()
+	if M.active_project_config == nil then
+		return nil
+	end
+
+	for _, pc in ipairs(M.project_configurations) do
+		if pc.name == M.active_project_config then
+			return pc
+		end
+	end
+
+	return nil
+end
+
+
+local function detect_active_project_config()
+	for _,pc in ipairs(M.project_configurations) do
+		if pc.detect() then
+			M.active_project_config = pc.name
+			break
+		end
+	end
+end
 
 local function install_packer()
 	local install_path = vim.fn.stdpath('data') .. '/site/pack/packer/start/packer.nvim'
@@ -82,6 +102,24 @@ function M.register_language(l)
 	table.insert(M.languages, l)
 end
 
+local KeybindingHandlers = {
+	[KeybindingKind.LspHover] = vim.lsp.buf.hover,
+	[KeybindingKind.LspGoToDefinition] = require'telescope.builtin'.lsp_definitions,
+	[KeybindingKind.LspGoToImplementation] = require'telescope.builtin'.lsp_implementations,
+	[KeybindingKind.LspGoToReference] = require'telescope.builtin'.lsp_references,
+	[KeybindingKind.SearchFiles] = function()
+	end,
+	[KeybindingKind.FindFile] = function()
+		local find_cmd = { "rg", "-i", "--hidden", "--files", "-g", "!.git" }
+		local tb = require 'telescope.builtin'
+
+		tb.find_files {
+			find_command = find_cmd,
+		}
+	end,
+	[KeybindingKind.FormatFile] = vim.lsp.buf.formatting,
+}
+
 function M.setup(config)
 	M.config = config
 
@@ -89,15 +127,41 @@ function M.setup(config)
 
 	setup_plugins(true)
 
+	detect_active_project_config()
+
+	vim.api.nvim_create_autocmd({"DirChanged"}, {
+		pattern = "*",
+		callback = detect_active_project_config
+	})
+
 	if M.config.colorscheme then
 		vim.cmd("colorscheme " .. M.config.colorscheme)
 	end
 
 	local lspinstaller = require("nvim-lsp-installer")
+	local tsconfig = require('nvim-treesitter.configs')
 	local lspconfig = require("lspconfig")
 	local capabilities = require('cmp_nvim_lsp').update_capabilities(vim.lsp.protocol.make_client_capabilities())
 
-	lspinstaller.setup {}
+	local lsp_ensure_installed = {}
+	local ts_ensure_installed = {}
+
+	for _,language in ipairs(M.languages) do
+		if language.components.lsp then
+			table.insert(lsp_ensure_installed, language.components.lsp.server)
+		end
+		if language.components.treesitter then
+			table.insert(ts_ensure_installed, language.components.treesitter.grammar)
+		end
+	end
+
+	tsconfig.setup {
+		ensure_installed = ts_ensure_installed,
+	}
+
+	lspinstaller.setup {
+		ensure_installed = lsp_ensure_installed
+	}
 
 	for _,language in ipairs(M.languages) do
 		if language.components.lsp then
@@ -112,45 +176,42 @@ function M.setup(config)
 					settings = settings,
 					capabilities = capabilities
 				}
-				if server:is_installed() then
-					print("neoide:language:" .. language.name .. ":lsp server already installed")
-				else
-					print("neoide:language:" .. language.name .. ":lsp installing server")
-					lspinstaller.install(server_name)
-				end
 				print("neoide:language:" .. language.name .. " finished setting up lsp component")
 			else
 				print("neoide:language:" .. language.name .. " server '" .. server_name .. "' not supported")
 			end
+		end
+		if language.components.treesitter then
+
 		end
 	end
 
 	local cmp = require'cmp'
 
 	cmp.setup({
-			snippet = {
-					-- REQUIRED - you must specify a snippet engine
-					expand = function(args)
-								require('luasnip').lsp_expand(args.body)
-					end,
-			},
-			window = {
-					completion = cmp.config.window.bordered(),
-					documentation = cmp.config.window.bordered(),
-			},
-			mapping = cmp.mapping.preset.insert({
-					['<C-b>'] = cmp.mapping.scroll_docs(-4),
-					['<C-f>'] = cmp.mapping.scroll_docs(4),
-					['<C-n>'] = cmp.mapping.complete(),
-					['<C-e>'] = cmp.mapping.abort(),
-					['<CR>'] = cmp.mapping.confirm({ select = true }), -- Accept currently selected item. Set `select` to `false` to only confirm explicitly selected items.
-			}),
-			sources = cmp.config.sources({
-					{ name = 'nvim_lsp' },
-					{ name = 'luasnip' }, -- For luasnip users.
-			}, {
-					{ name = 'buffer' },
-			})
+		snippet = {
+			-- REQUIRED - you must specify a snippet engine
+			expand = function(args)
+				require('luasnip').lsp_expand(args.body)
+			end,
+		},
+		window = {
+			completion = cmp.config.window.bordered(),
+			documentation = cmp.config.window.bordered(),
+		},
+		mapping = cmp.mapping.preset.insert({
+			['<C-b>'] = cmp.mapping.scroll_docs(-4),
+			['<C-f>'] = cmp.mapping.scroll_docs(4),
+			['<C-n>'] = cmp.mapping.complete(),
+			['<C-e>'] = cmp.mapping.abort(),
+			['<CR>'] = cmp.mapping.confirm({ select = true }), -- Accept currently selected item. Set `select` to `false` to only confirm explicitly selected items.
+		}),
+		sources = cmp.config.sources({
+			{ name = 'nvim_lsp' },
+			{ name = 'luasnip' }, -- For luasnip users.
+		}, {
+			{ name = 'buffer' },
+		})
 	})
 
 	local keybindings = vim.tbl_extend("force", M.keybindings, M.config.keybindings or {})
