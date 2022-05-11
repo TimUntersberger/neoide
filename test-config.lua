@@ -39,6 +39,8 @@ neoide.register_language {
 	}
 }
 
+local csharp_dap_install_location = vim.fn.stdpath("data") .. "dap/netcoredbg"
+
 neoide.register_language {
 	name = "csharp",
 	components = {
@@ -47,6 +49,23 @@ neoide.register_language {
 		},
 		treesitter = {
 			grammar = "c_sharp"
+		},
+		dap = {
+			install_command = {},
+			adapter = {
+				name = "coreclr",
+				type = "executable",
+				command = csharp_dap_install_location,
+				args = {"--interpreter=vscode"}
+			},
+			config = {
+				type = "coreclr",
+				name = "launch - netcoredbg",
+				request = "launch",
+				program = function()
+					return vim.fn.input('Path to dll', vim.fn.getcwd() .. '/bin/Debug/', 'file')
+				end
+			}
 		}
 	}
 }
